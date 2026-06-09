@@ -2,3 +2,6 @@
 dist/
 *.log
 .intent/
+
+# Throughline active session
+.intent/session.yml

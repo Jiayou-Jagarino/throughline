@@ -24,7 +24,9 @@ export class ContextBuilder {
     try {
       const entry = `[${new Date().toISOString()}] trigger=context-read source=${source} session=${this.store.hasActiveSession() ? this.store.read().session.id : 'none'}\n`
       fs.appendFileSync(this.auditLogPath, entry, 'utf8')
-    } catch { /* swallow */ }
+    } catch (err) {
+      console.error(`[throughline] Failed to log context read: ${(err as Error).message}`)
+    }
   }
 
   startReadWatcher(intervalMs: number = 5000): void {
@@ -48,7 +50,9 @@ export class ContextBuilder {
 
         prevAtime = Math.max(curr.atimeMs, prevAtime)
         prevMtime = Math.max(curr.mtimeMs, prevMtime)
-      } catch { /* swallow */ }
+      } catch (err) {
+        console.error(`[throughline] Read watcher error: ${(err as Error).message}`)
+      }
     }, intervalMs)
   }
 
@@ -68,8 +72,12 @@ export class ContextBuilder {
 
       const entry = `[${new Date().toISOString()}] trigger=${trigger} size=${Buffer.byteLength(block)} session=${this.store.hasActiveSession() ? this.store.read().session.id : 'none'}\n`
       fs.appendFileSync(this.auditLogPath, entry, 'utf8')
-    } catch {
-      fs.writeFileSync(this.contextFilePath, '# Throughline: no active session\n', 'utf8')
+    } catch (err) {
+      try {
+        fs.writeFileSync(this.contextFilePath, '# Throughline: no active session\n', 'utf8')
+      } catch (fallbackErr) {
+        console.error(`[throughline] Failed to write context file: ${(err as Error).message} (fallback also failed: ${(fallbackErr as Error).message})`)
+      }
     }
   }
 
@@ -131,6 +139,12 @@ export class ContextBuilder {
     if (pendingTasks) block += `\nPending tasks:\n${pendingTasks}\n`
     if (deviations > 0) block += `\nDeviations recorded: ${deviations}\n`
 
+    block += `\n---\n`
+    block += `To update this session, emit Throughline markers in your response:\n`
+    block += `[THROUGHLINE:PLAN]{"tasks":[{"intent":"...","steps":[{"intent":"...","files":["..."]}]}]}[/THROUGHLINE:PLAN]\n`
+    block += `[THROUGHLINE:STEP_DONE]\n`
+    block += `[THROUGHLINE:DEVIATE reason="..." spawns="..."]\n`
+    block += `[THROUGHLINE:NOTE text="..." category="decision|context|feedback|insight"]\n`
     block += `[/THROUGHLINE CONTEXT]`
     return block
   }

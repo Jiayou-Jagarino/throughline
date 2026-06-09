@@ -52,10 +52,10 @@ export function parsePlanMarker(output: string): PlanMarker | null {
   if (!match) return null
 
   try {
-    // The plan content is JSON inside the markers
     const parsed = JSON.parse(match[1].trim())
     return parsed as PlanMarker
-  } catch {
+  } catch (err) {
+    console.error(`[throughline] Failed to parse plan marker: ${(err as Error).message}`)
     return null
   }
 }
@@ -90,6 +90,7 @@ export function stripMarkers(output: string): string {
     .replace(STEP_DONE_PATTERN, '')
     .replace(NOTE_PATTERN, '')
     .replace(CONTEXT_READ_PATTERN, '')
+    .replace(/\s{2,}/g, ' ')
     .trim()
 }
 

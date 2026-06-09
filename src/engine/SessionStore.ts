@@ -6,6 +6,9 @@ import type { IntentGraph, Agent, SessionRelation } from '../types.js'
 const INTENT_DIR = '.intent'
 const SESSION_FILE = 'session.yml'
 const HISTORY_DIR = 'history'
+const LOCK_FILE = '.session.lock'
+const LOCK_RETRIES = 30
+const LOCK_RETRY_MS = 50
 
 export class SessionStore {
   private root: string
@@ -14,6 +17,7 @@ export class SessionStore {
     this.root = cwd
   }
 
+  get rootDir() { return this.root }
   get intentDir() { return path.join(this.root, INTENT_DIR) }
   get sessionFile() { return path.join(this.intentDir, SESSION_FILE) }
   get historyDir() { return path.join(this.intentDir, HISTORY_DIR) }
@@ -39,6 +43,12 @@ export class SessionStore {
       if (!content.includes(entry)) {
         fs.appendFileSync(gitignore, `\n# Throughline active session\n${entry}\n`)
       }
+    } else {
+      try {
+        fs.writeFileSync(gitignore, `# Throughline active session\n${entry}\n`, 'utf8')
+      } catch (err) {
+        console.error(`[throughline] Failed to create .gitignore: ${(err as Error).message}`)
+      }
     }
   }
 
@@ -54,12 +64,16 @@ export class SessionStore {
     if (!this.hasActiveSession()) {
       throw new Error('No active session. Run `throughline start "your goal"` first.')
     }
-    const raw = fs.readFileSync(this.sessionFile, 'utf8')
-    return yaml.load(raw) as IntentGraph
+    return this._readYamlFile(this.sessionFile)
   }
 
   write(graph: IntentGraph): void {
-    fs.writeFileSync(this.sessionFile, yaml.dump(graph, { lineWidth: 120 }), 'utf8')
+    this._acquireLock()
+    try {
+      this._writeAtomic(this.sessionFile, yaml.dump(graph, { lineWidth: 120 }))
+    } finally {
+      this._releaseLock()
+    }
   }
 
   createSession(goal: string, agent: Agent = 'claude-code', parent?: { id: string; relation: SessionRelation }): IntentGraph {
@@ -89,35 +103,54 @@ export class SessionStore {
     graph.session.closed_at = new Date().toISOString()
 
     const archivePath = path.join(this.historyDir, `${graph.session.id}.yml`)
-    fs.writeFileSync(archivePath, yaml.dump(graph, { lineWidth: 120 }), 'utf8')
-    fs.unlinkSync(this.sessionFile)
+    this._acquireLock()
+    try {
+      this._writeAtomic(archivePath, yaml.dump(graph, { lineWidth: 120 }))
+      fs.unlinkSync(this.sessionFile)
+    } finally {
+      this._releaseLock()
+    }
   }
 
   getLastSession(): IntentGraph | null {
-    if (!fs.existsSync(this.historyDir)) return null
-    const files = fs.readdirSync(this.historyDir)
-      .filter(f => f.endsWith('.yml'))
-      .sort()
-      .reverse()
-    if (files.length === 0) return null
-    const raw = fs.readFileSync(path.join(this.historyDir, files[0]), 'utf8')
-    return yaml.load(raw) as IntentGraph
+    try {
+      if (!fs.existsSync(this.historyDir)) return null
+      const files = this._readDir(this.historyDir)
+        .filter(f => f.endsWith('.yml'))
+        .sort()
+        .reverse()
+      if (files.length === 0) return null
+      return this._readYamlFile(path.join(this.historyDir, files[0]))
+    } catch (err) {
+      console.error(`[throughline] Failed to read last session: ${(err as Error).message}`)
+      return null
+    }
   }
 
   getSessionById(id: string): IntentGraph | null {
-    const filePath = path.join(this.historyDir, `${id}.yml`)
-    if (!fs.existsSync(filePath)) return null
-    const raw = fs.readFileSync(filePath, 'utf8')
-    return yaml.load(raw) as IntentGraph
+    try {
+      const filePath = path.join(this.historyDir, `${id}.yml`)
+      if (!fs.existsSync(filePath)) return null
+      return this._readYamlFile(filePath)
+    } catch (err) {
+      console.error(`[throughline] Failed to read session ${id}: ${(err as Error).message}`)
+      return null
+    }
   }
 
   listSessions(): IntentGraph[] {
-    if (!fs.existsSync(this.historyDir)) return []
-    return fs.readdirSync(this.historyDir)
-      .filter(f => f.endsWith('.yml'))
-      .sort()
-      .reverse()
-      .map(f => yaml.load(fs.readFileSync(path.join(this.historyDir, f), 'utf8')) as IntentGraph)
+    try {
+      if (!fs.existsSync(this.historyDir)) return []
+      return this._readDir(this.historyDir)
+        .filter(f => f.endsWith('.yml'))
+        .sort()
+        .reverse()
+        .map(f => this._readYamlFileSafe(path.join(this.historyDir, f)))
+        .filter((s): s is IntentGraph => s !== null)
+    } catch (err) {
+      console.error(`[throughline] Failed to list sessions: ${(err as Error).message}`)
+      return []
+    }
   }
 
   addNote(text: string, source: 'developer' | 'ai' = 'developer', category?: string): void {
@@ -127,11 +160,98 @@ export class SessionStore {
   }
 
   private nextSessionId(): string {
-    if (!fs.existsSync(this.historyDir)) return 'session-001'
-    const files = fs.readdirSync(this.historyDir).filter(f => f.startsWith('session-'))
-    if (files.length === 0) return 'session-001'
-    const nums = files.map(f => parseInt(f.replace('session-', '').replace('.yml', ''))).filter(n => !isNaN(n))
-    const next = Math.max(...nums) + 1
-    return `session-${String(next).padStart(3, '0')}`
+    try {
+      if (!fs.existsSync(this.historyDir)) return 'session-001'
+      const files = this._readDir(this.historyDir).filter(f => f.startsWith('session-'))
+      if (files.length === 0) return 'session-001'
+      const nums = files.map(f => parseInt(f.replace('session-', '').replace('.yml', ''))).filter(n => !isNaN(n))
+      if (nums.length === 0) return 'session-001'
+      const next = Math.max(...nums) + 1
+      return `session-${String(next).padStart(3, '0')}`
+    } catch (err) {
+      console.error(`[throughline] Failed to generate session ID: ${(err as Error).message}`)
+      return 'session-001'
+    }
+  }
+
+  private _readYamlFile(filePath: string): IntentGraph {
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8')
+      const graph = yaml.load(raw)
+      if (!graph || typeof graph !== 'object') {
+        throw new Error(`Invalid YAML in ${filePath}`)
+      }
+      return graph as IntentGraph
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('Invalid YAML')) throw err
+      throw new Error(`Failed to read ${path.basename(filePath)}: ${(err as Error).message}`)
+    }
+  }
+
+  private _readYamlFileSafe(filePath: string): IntentGraph | null {
+    try {
+      return this._readYamlFile(filePath)
+    } catch (err) {
+      console.error(`[throughline] Skipping corrupt session file ${path.basename(filePath)}: ${(err as Error).message}`)
+      return null
+    }
+  }
+
+  private _readDir(dirPath: string): string[] {
+    try {
+      return fs.readdirSync(dirPath)
+    } catch (err) {
+      throw new Error(`Failed to read directory ${dirPath}: ${(err as Error).message}`)
+    }
+  }
+
+  private _lockFilePath(): string {
+    return path.join(this.intentDir, LOCK_FILE)
+  }
+
+  private _acquireLock(): boolean {
+    const lockFile = this._lockFilePath()
+    for (let i = 0; i < LOCK_RETRIES; i++) {
+      try {
+        fs.writeFileSync(lockFile, '', { flag: 'wx' })
+        return true
+      } catch (err) {
+        const nodeErr = err as NodeJS.ErrnoException
+        if (nodeErr.code === 'EEXIST') {
+          try {
+            const stat = fs.statSync(lockFile)
+            if (Date.now() - stat.mtimeMs > 5000) {
+              fs.unlinkSync(lockFile)
+              continue
+            }
+          } catch {}
+          for (let spin = 0; spin < 5; spin++) {}
+          continue
+        }
+        return false
+      }
+    }
+    return false
+  }
+
+  private _releaseLock(): void {
+    try { fs.unlinkSync(this._lockFilePath()) } catch {}
+  }
+
+  private _writeAtomic(filePath: string, content: string): void {
+    const tmpPath = filePath + '.tmp'
+    try {
+      fs.writeFileSync(tmpPath, content, 'utf8')
+      fs.renameSync(tmpPath, filePath)
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath) } catch {}
+      const nodeErr = err as NodeJS.ErrnoException
+      if (nodeErr.code === 'ENOSPC') {
+        throw new Error(
+          `Disk full: cannot write ${path.basename(filePath)}. Free disk space and retry.`
+        )
+      }
+      throw new Error(`Failed to write ${path.basename(filePath)}: ${nodeErr.message}`)
+    }
   }
 }

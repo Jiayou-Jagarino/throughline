@@ -17,13 +17,15 @@ export class FileWatcher {
   private store: SessionStore
   private tracker: TaskTracker
   private root: string
+  private watchDepth: number
   private unplannedFiles: string[] = []
   private onUnplanned?: (file: string, plannedFiles: string[]) => void
 
-  constructor(store: SessionStore, tracker: TaskTracker, root: string = process.cwd()) {
+  constructor(store: SessionStore, tracker: TaskTracker, root: string = process.cwd(), watchDepth: number = 3) {
     this.store = store
     this.tracker = tracker
     this.root = root
+    this.watchDepth = watchDepth
   }
 
   start(onUnplanned?: (file: string, plannedFiles: string[]) => void): void {
@@ -33,7 +35,7 @@ export class FileWatcher {
       ignored: IGNORED,
       persistent: true,
       ignoreInitial: true,
-      depth: 10,
+      depth: this.watchDepth,
     })
 
     this.watcher.on('change', (filePath) => this.handleChange(filePath))

@@ -19,7 +19,7 @@ const contextBuilder = new ContextBuilder(store)
 
 const server = new McpServer({
   name: 'throughline',
-  version: '0.2.0',
+  version: '0.3.0',
   description: 'Intent-first AI coding session tracker — context and status',
 })
 

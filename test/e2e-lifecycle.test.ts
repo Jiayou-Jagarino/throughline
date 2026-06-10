@@ -95,7 +95,7 @@ describe('E2E: full session lifecycle', () => {
 
     ctx.writeContextFile('note')
     contextContent = readFileSync(ctx.contextFilePath, 'utf8')
-    expect(contextContent).toContain('Session notes')
+    expect(contextContent).toContain('Key decisions')
     expect(contextContent).toContain('Use RS256 algorithm for JWT')
 
     // ── 7. Close session ──

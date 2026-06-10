@@ -2,17 +2,20 @@ import chalk from 'chalk'
 import chokidar from 'chokidar'
 import readline from 'readline'
 import { execSync, spawn } from 'child_process'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
+import path from 'path'
 import { z } from 'zod/v4'
 
 import { SessionStore } from '../engine/SessionStore.js'
 import { TaskTracker } from '../engine/TaskTracker.js'
 import { ContextBuilder } from '../engine/ContextBuilder.js'
 import { FileWatcher } from '../engine/FileWatcher.js'
+import { OpenCodeBridge, resolveOpenCodeExe } from '../engine/OpenCodeBridge.js'
 import { MarkerScanner } from '../session/MarkerScanner.js'
 import { buildAgentSystemPrompt } from '../parsers/deviationParser.js'
 import { debug } from '../utils/logger.js'
-import type { Agent } from '../types.js'
+import type { Agent, IntentGraph } from '../types.js'
 
 const AgentSchema = z.enum(['claude-code', 'opencode', 'gemini-cli', 'other'])
 
@@ -58,8 +61,10 @@ export async function cmdStart(goal: string, options: { agent?: string; setup?: 
   const contextBuilder = new ContextBuilder(store)
 
   if (!store.isInitialized()) {
-    console.log(chalk.yellow('Run `throughline init` first'))
-    return
+    store.init()
+    console.log(chalk.green('✓ Throughline initialized'))
+    console.log(chalk.dim('  Created .intent/ directory'))
+    console.log()
   }
 
   if (store.hasActiveSession()) {
@@ -373,8 +378,10 @@ export async function cmdAttach(options: { cwd?: string; watchDepth?: number } =
   const contextBuilder = new ContextBuilder(store)
 
   if (!store.isInitialized()) {
-    console.log(chalk.yellow('Run `throughline init` first'))
-    return
+    store.init()
+    console.log(chalk.green('✓ Throughline initialized'))
+    console.log(chalk.dim('  Created .intent/ directory'))
+    console.log()
   }
 
   if (!store.hasActiveSession()) {
@@ -481,31 +488,34 @@ async function launchAgent(
   contextBuilder: ContextBuilder,
   watchDepth: number = 3,
 ): Promise<void> {
-  const watcher = new FileWatcher(store, tracker, undefined, watchDepth)
-
-  watcher.start((file, plannedFiles) => {
-    console.error(chalk.magenta(`\n⚡ Unplanned file touched: ${file}`))
-    console.error(chalk.dim(`   Planned: ${plannedFiles.join(', ')}`))
-    console.error(chalk.dim('   Run `throughline deviate "reason"` if this represents a plan change'))
-  })
-
-  const agentCmd = getAgentCommand(agent)
-  if (!agentCmd) {
-    console.log(chalk.yellow(`Agent "${agent}" not found. Throughline context is ready.`))
-    console.log(chalk.dim('Start your agent manually. The intent context is in .intent/session.yml'))
-    console.log()
-    console.log(chalk.dim('Context block that will be injected:'))
-    console.log(chalk.dim(systemPrompt))
-    watcher.stop()
+  if (agent === 'opencode') {
+    await launchOpenCodeBridge(goal, systemPrompt, store, tracker, contextBuilder, watchDepth)
     return
   }
 
-  console.log(chalk.dim(`Launching ${agent}...`))
+  const agentCmd = getAgentCommand(agent)
+  if (!agentCmd) {
+    console.log(chalk.yellow('Agent not found — context is ready.'))
+    console.log(chalk.dim('  .intent/context.txt has been written'))
+    console.log()
+    console.log(chalk.cyan('─── THROUGHLINE CONTEXT ───'))
+    process.stdout.write(contextBuilder.buildContextBlock() + '\n')
+    console.log(chalk.cyan('───────────────────────────'))
+    return
+  }
+
+  // ── Wrap strategy (claude-code via pipes) ─────────────────────────────────
+  const watcher = new FileWatcher(store, tracker, undefined, watchDepth)
+  watcher.start((file, plannedFiles) => {
+    console.error(chalk.magenta('\n⚡ Unplanned file touched: ' + file))
+    console.error(chalk.dim('   Planned: ' + plannedFiles.join(', ')))
+  })
+
+  console.log(chalk.dim('Launching ' + agent + '...'))
   console.log(chalk.dim('Throughline is watching for file changes and deviation markers'))
   console.log()
 
   const session = store.read()
-
   contextBuilder.startReadWatcher()
 
   const markerScanner = new MarkerScanner()
@@ -521,8 +531,7 @@ async function launchAgent(
         recorded_at: new Date().toISOString(),
       })
       refreshContext()
-      console.error(chalk.magenta(`\n⚡ Deviation detected: ${event.reason}`))
-      if (event.spawns) console.error(chalk.magenta(`   Spawned: ${event.spawns}`))
+      console.error(chalk.magenta('\n⚡ Deviation detected: ' + event.reason))
     }
   })
 
@@ -543,7 +552,7 @@ async function launchAgent(
           completed_at: null,
         })),
       })))
-      console.error(chalk.green('\n✓ Intent plan captured from agent'))
+      console.error(chalk.green('\n✓ Intent plan captured'))
       const firstTask = tracker.getCurrentTask()
       const firstStep = tracker.getCurrentStep()
       if (!firstTask && !firstStep) {
@@ -552,7 +561,7 @@ async function launchAgent(
         if (t0 && t0.steps[0]) {
           tracker.setStepStatus(t0.id, t0.steps[0].id, 'in_progress')
           refreshContext()
-          console.error(chalk.blue(`\n▶ Started: ${t0.steps[0].intent}`))
+          console.error(chalk.blue('\n▶ Started: ' + t0.steps[0].intent))
         }
       }
       refreshContext()
@@ -565,20 +574,19 @@ async function launchAgent(
     if (currentTask && currentStep) {
       tracker.completeStep(currentTask.id, currentStep.id)
       refreshContext()
-      console.error(chalk.green(`\n✓ Step complete: ${currentStep.intent}`))
-
+      console.error(chalk.green('\n✓ Step complete: ' + currentStep.intent))
       const graph = store.read()
       const task = graph.tasks.find(t => t.id === currentTask.id)!
       const nextStep = task.steps.find(s => s.status === 'pending')
       if (nextStep) {
         tracker.setStepStatus(task.id, nextStep.id, 'in_progress')
         refreshContext()
-        console.error(chalk.blue(`▶ Next step: ${nextStep.intent}`))
+        console.error(chalk.blue('▶ Next step: ' + nextStep.intent))
       } else {
         const nextTask = graph.tasks.find(t => t.status === 'pending')
         if (nextTask) {
-          console.error(chalk.green(`✓ Task complete: ${task.intent}`))
-          console.error(chalk.blue(`▶ Next task: ${nextTask.intent}`))
+          console.error(chalk.green('✓ Task complete: ' + task.intent))
+          console.error(chalk.blue('▶ Next task: ' + nextTask.intent))
         }
       }
     }
@@ -587,13 +595,11 @@ async function launchAgent(
   markerScanner.onNote((event) => {
     store.addNote(event.text, 'ai', event.category)
     refreshContext()
-    const category = event.category ? chalk.dim(` [${event.category}]`) : ''
-    console.error(chalk.cyan(`\n📝 Note${category}: ${event.text}`))
+    console.error(chalk.cyan('\n📝 Note: ' + event.text))
   })
 
   markerScanner.onContextRead(() => {
     contextBuilder.logContextRead('agent')
-    console.error(chalk.dim(`\n[${new Date().toLocaleTimeString()}] Agent read context`))
   })
 
   let agentExited = false
@@ -623,32 +629,20 @@ async function launchAgent(
     process.stderr.write(data.toString())
   })
 
-  // Forward user stdin → agent (always, not gated on isTTY)
   process.stdin.resume()
   process.stdin.on('data', (data: Buffer) => {
     const input = data.toString()
-
-    // Double Ctrl+C to kill
     if (input === '\x03') {
-      if (sigintCount > 0) {
-        console.error(chalk.dim('\nForce terminating...\n'))
-        child.kill()
-        return
-      }
+      if (sigintCount > 0) { child.kill(); return }
       sigintCount++
-      console.error(chalk.dim('\nShutting down agent... (press Ctrl+C again to force)\n'))
       sigintTimer = setTimeout(() => { sigintCount = 0 }, 2000)
       return
     }
-
     sigintCount = 0
     if (!child.killed) child.stdin!.write(data)
   })
 
-  // Only set raw mode if we actually have a TTY
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true)
-  }
+  if (process.stdin.isTTY) process.stdin.setRawMode(true)
 
   child.on('exit', (code) => {
     agentExited = true
@@ -668,7 +662,7 @@ async function launchAgent(
   contextBuilder.stopReadWatcher()
   watcher.stop()
   console.error()
-  console.error(chalk.dim(`Agent session ended (exit code ${agentExitCode})`))
+  console.error(chalk.dim('Agent session ended (exit code ' + agentExitCode + ')'))
 
   const graph = store.read()
   const allDone = graph.tasks.length > 0 && graph.tasks.every(t => t.status === 'complete' || t.status === 'abandoned')
@@ -694,6 +688,147 @@ async function launchAgent(
 
   process.exit(0)
 }
+
+// ─── OpenCode bridge launcher ─────────────────────────────────────────────
+
+async function launchOpenCodeBridge(
+  goal: string,
+  systemPrompt: string,
+  store: SessionStore,
+  tracker: TaskTracker,
+  contextBuilder: ContextBuilder,
+  watchDepth: number = 3,
+): Promise<void> {
+  const bridge = new OpenCodeBridge({
+    store,
+    tracker,
+    contextBuilder,
+    onFileTouch: (file) => {
+      console.error(chalk.dim('[' + new Date().toLocaleTimeString() + '] touched: ' + file))
+    },
+    onTodoUpdate: (todos) => {
+      const done = todos.filter(t => t.status === 'completed').length
+      console.error(chalk.dim('[' + new Date().toLocaleTimeString() + '] todos: ' + done + '/' + todos.length + ' complete'))
+    },
+    onSessionIdle: () => {
+      console.error(chalk.dim('[' + new Date().toLocaleTimeString() + '] agent idle — context synced'))
+    },
+    onSessionCreated: (id) => {
+      console.error(chalk.dim('[' + new Date().toLocaleTimeString() + '] opencode session: ' + id))
+    },
+  })
+
+  const serverReady = await bridge.startServer()
+  if (!serverReady) {
+    console.log(chalk.red('✗ Could not start OpenCode server'))
+    console.log(chalk.dim('  Start it manually: opencode serve --port 4096'))
+    console.log(chalk.dim('  Then run: opencode attach http://localhost:4096'))
+    return
+  }
+
+  writeAgentsMd(store, systemPrompt)
+  bridge.startSSE()
+  contextBuilder.startReadWatcher()
+
+  const fileWatcher = new FileWatcher(store, tracker, store.rootDir, watchDepth)
+  fileWatcher.start((file, plannedFiles) => {
+    console.error(chalk.magenta('\n⚡ Unplanned file touched: ' + file))
+    console.error(chalk.dim('   Planned: ' + plannedFiles.join(', ')))
+  })
+
+  console.log()
+  console.log(chalk.green('✓ Throughline is watching your OpenCode session'))
+  console.log()
+
+  // Auto-launch opencode attach in a new terminal window
+  const agentExe = resolveOpenCodeExe()
+  if (!agentExe) {
+    console.log(chalk.yellow('opencode not found — attach manually:'))
+    console.log(chalk.cyan(`  opencode attach http://localhost:${bridge.getPort()}`))
+  } else {
+    const port = bridge.getPort()
+    const tmpScript = path.join(tmpdir(), `tl-opencode-${Date.now()}.cmd`)
+    writeFileSync(tmpScript, `@echo off\r\n"${agentExe}" attach http://localhost:${port}\r\nexit /b %errorlevel%\r\n`, 'utf8')
+
+    console.log(chalk.green('✓ OpenCode session started'))
+    console.log(chalk.dim('  A new terminal window has opened for OpenCode'))
+    console.log(chalk.dim('  Close that window or exit OpenCode when done'))
+    console.log()
+
+    const client = spawn('cmd.exe', ['/c', 'start', '"OpenCode"', '/wait', 'cmd.exe', '/c', tmpScript], {
+      stdio: 'ignore',
+    })
+
+    await new Promise<void>((resolve) => {
+      process.on('SIGINT', () => resolve())
+      client.on('exit', () => { try { unlinkSync(tmpScript) } catch {}; resolve() })
+      client.on('error', () => {
+        try { unlinkSync(tmpScript) } catch {}
+        console.log(chalk.yellow('Could not open terminal window — attach manually:'))
+        console.log(chalk.cyan(`  opencode attach http://localhost:${port}`))
+        resolve()
+      })
+    })
+
+    console.log(chalk.dim('\nOpenCode window closed'))
+  }
+
+  console.log()
+  console.log(chalk.dim('Run `throughline status` to see intent graph'))
+  console.log(chalk.dim('Run `throughline done --session` to end session'))
+  console.log()
+
+  fileWatcher.stop()
+  bridge.stopSSE()
+  contextBuilder.stopReadWatcher()
+
+  // Multi-option menu after opencode closes
+  const graph = store.read()
+  const allDone = graph.tasks.length > 0 && graph.tasks.every(t => t.status === 'complete' || t.status === 'abandoned')
+  const doneCount = graph.tasks.filter(t => t.status === 'complete').length
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+
+  const ask = (): Promise<string> => {
+    return new Promise((resolve) => {
+      console.log()
+      console.log(chalk.dim(`Session: ${graph.tasks.length} tasks (${doneCount} complete)`))
+      console.log(chalk.dim('─────────────────────────────────────'))
+      console.log(chalk.white('  [s] Status — view intent graph'))
+      console.log(chalk.white('  [d] Done — close session'))
+      console.log(chalk.white('  [k] Keep open — close later'))
+      console.log(chalk.dim('─────────────────────────────────────'))
+      const defaultKey = allDone ? 'd' : 'k'
+      const prompt = chalk.green(`What now? (s/d/k) [${defaultKey}]: `)
+      rl.question(prompt, (a) => { resolve(a.trim().toLowerCase() || defaultKey) })
+    })
+  }
+
+  let done = false
+  while (!done) {
+    const answer = await ask()
+    if (answer === 's') {
+      cmdStatus({ cwd: store.rootDir })
+    } else if (answer === 'd') {
+      store.closeSession(allDone ? 'complete' : 'abandoned')
+      console.log(chalk.green('\n✓ Session closed'))
+      done = true
+    } else {
+      console.log(chalk.dim('\nSession kept open — run `throughline done --session` to close later'))
+      done = true
+    }
+  }
+  rl.close()
+}
+
+// ─── Write AGENTS.md ──────────────────────────────────────────────────────
+
+function writeAgentsMd(store: SessionStore, contextBlock: string): void {
+  const agentsMdPath = path.join(store.rootDir, 'AGENTS.md')
+  const content = '# Throughline Session Context\n\n' + contextBlock + '\n'
+  writeFileSync(agentsMdPath, content, 'utf8')
+  console.log(chalk.dim('  AGENTS.md updated with session context'))
+}
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -826,8 +961,10 @@ export async function cmdResume(options: { agent?: string; cwd?: string; watchDe
   const contextBuilder = new ContextBuilder(store)
 
   if (!store.isInitialized()) {
-    console.log(chalk.yellow('Run `throughline init` first'))
-    return
+    store.init()
+    console.log(chalk.green('✓ Throughline initialized'))
+    console.log(chalk.dim('  Created .intent/ directory'))
+    console.log()
   }
 
   if (store.hasActiveSession()) {
@@ -837,19 +974,51 @@ export async function cmdResume(options: { agent?: string; cwd?: string; watchDe
     return
   }
 
-  const last = store.getLastSession()
-  if (!last) {
+  const sessions = store.listSessions()
+  if (sessions.length === 0) {
     console.log(chalk.yellow('No previous session found'))
     console.log(chalk.dim('  Start a new session with `throughline start "your goal"`'))
     return
   }
 
-  // Find incomplete tasks to resume
-  const incompleteTasks = last.tasks.filter(t => t.status !== 'complete' && t.status !== 'abandoned')
-  const completedTasks = last.tasks.filter(t => t.status === 'complete')
+  let selected: IntentGraph
+  if (sessions.length === 1) {
+    selected = sessions[0]
+  } else {
+    console.log(chalk.bold('\nAvailable sessions:\n'))
+    sessions.forEach((s, i) => {
+      const statusColor = {
+        complete: chalk.green,
+        abandoned: chalk.red,
+        in_progress: chalk.blue,
+        deviated: chalk.magenta,
+        pending: chalk.yellow,
+      }[s.session.status] || chalk.white
+      const done = s.tasks.filter(t => t.status === 'complete').length
+      console.log(statusColor(`  [${i + 1}] ${s.session.id}`) + chalk.dim(` — ${s.session.goal}`))
+      console.log(chalk.dim(`      ${s.session.agent}  ·  ${new Date(s.session.started_at).toLocaleDateString()}  ·  ${done}/${s.tasks.length} tasks`))
+    })
+    console.log()
 
-  console.log(chalk.white(`Resuming: "${last.session.goal}"`))
-  console.log(chalk.dim(`  Previous session: ${last.session.id}`))
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+    const pick = await new Promise<number>((resolve) => {
+      const prompt = chalk.green(`Pick a session (1-${sessions.length}) [1]: `)
+      rl.question(prompt, (a) => {
+        const n = parseInt(a.trim(), 10)
+        if (n >= 1 && n <= sessions.length) resolve(n - 1)
+        else resolve(0)
+      })
+    })
+    rl.close()
+    selected = sessions[pick]
+  }
+
+  // Find incomplete tasks to resume
+  const incompleteTasks = selected.tasks.filter(t => t.status !== 'complete' && t.status !== 'abandoned')
+  const completedTasks = selected.tasks.filter(t => t.status === 'complete')
+
+  console.log(chalk.white(`Resuming: "${selected.session.goal}"`))
+  console.log(chalk.dim(`  Previous session: ${selected.session.id}`))
   if (completedTasks.length > 0) {
     console.log(chalk.green(`  ✓ ${completedTasks.length} tasks already complete`))
   }
@@ -858,8 +1027,8 @@ export async function cmdResume(options: { agent?: string; cwd?: string; watchDe
   }
   console.log()
 
-  const agent = options.agent ? resolveAgent(options.agent) : last.session.agent
-  const graph = store.createSession(last.session.goal, agent, { id: last.session.id, relation: 'resume' })
+  const agent = options.agent ? resolveAgent(options.agent) : selected.session.agent
+  const graph = store.createSession(selected.session.goal, agent, { id: selected.session.id, relation: 'resume' })
 
   // Carry over incomplete tasks
   if (incompleteTasks.length > 0) {
@@ -873,10 +1042,10 @@ export async function cmdResume(options: { agent?: string; cwd?: string; watchDe
   }
 
   console.log(chalk.green(`✓ Resume session started: ${graph.session.id}`))
-  contextBuilder.writeContextFile('resume', last)
-  const contextBlock = contextBuilder.buildContextBlock(last)
+  contextBuilder.writeContextFile('resume', selected)
+  const contextBlock = contextBuilder.buildContextBlock(selected)
   const systemPrompt = buildAgentSystemPrompt(contextBlock)
-  await launchAgent(agent, last.session.goal, systemPrompt, store, tracker, contextBuilder, Number(options.watchDepth) || 3)
+  await launchAgent(agent, selected.session.goal, systemPrompt, store, tracker, contextBuilder, Number(options.watchDepth) || 3)
 }
 
 export async function cmdRepair(options: { agent?: string; cwd?: string; watchDepth?: number } = {}) {
@@ -885,8 +1054,10 @@ export async function cmdRepair(options: { agent?: string; cwd?: string; watchDe
   const contextBuilder = new ContextBuilder(store)
 
   if (!store.isInitialized()) {
-    console.log(chalk.yellow('Run `throughline init` first'))
-    return
+    store.init()
+    console.log(chalk.green('✓ Throughline initialized'))
+    console.log(chalk.dim('  Created .intent/ directory'))
+    console.log()
   }
 
   if (store.hasActiveSession()) {
@@ -939,8 +1110,10 @@ export async function cmdContinue(goal: string, options: { agent?: string; cwd?:
   const contextBuilder = new ContextBuilder(store)
 
   if (!store.isInitialized()) {
-    console.log(chalk.yellow('Run `throughline init` first'))
-    return
+    store.init()
+    console.log(chalk.green('✓ Throughline initialized'))
+    console.log(chalk.dim('  Created .intent/ directory'))
+    console.log()
   }
 
   if (store.hasActiveSession()) {

@@ -90,7 +90,6 @@ export function stripMarkers(output: string): string {
     .replace(STEP_DONE_PATTERN, '')
     .replace(NOTE_PATTERN, '')
     .replace(CONTEXT_READ_PATTERN, '')
-    .replace(/\s{2,}/g, ' ')
     .trim()
 }
 

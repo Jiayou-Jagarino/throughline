@@ -135,27 +135,27 @@ describe('hasStepDoneMarker', () => {
 describe('stripMarkers', () => {
   it('removes deviation markers', () => {
     const result = stripMarkers('Hello [THROUGHLINE:DEVIATE reason="test"] world')
-    expect(result).toBe('Hello world')
+    expect(result).toBe('Hello  world')
   })
 
   it('removes plan markers', () => {
     const result = stripMarkers('plan [THROUGHLINE:PLAN]{}[/THROUGHLINE:PLAN] end')
-    expect(result).toBe('plan end')
+    expect(result).toBe('plan  end')
   })
 
   it('removes step done markers', () => {
     const result = stripMarkers('done [THROUGHLINE:STEP_DONE] now')
-    expect(result).toBe('done now')
+    expect(result).toBe('done  now')
   })
 
   it('removes note markers', () => {
     const result = stripMarkers('note [THROUGHLINE:NOTE text="hi"] here')
-    expect(result).toBe('note here')
+    expect(result).toBe('note  here')
   })
 
   it('removes context read markers', () => {
     const result = stripMarkers('read [THROUGHLINE:CONTEXT_READ] ok')
-    expect(result).toBe('read ok')
+    expect(result).toBe('read  ok')
   })
 
   it('strips all marker types in one pass', () => {
@@ -167,9 +167,5 @@ describe('stripMarkers', () => {
       '[THROUGHLINE:CONTEXT_READ]',
     ].join(' ')
     expect(stripMarkers(input)).toBe('')
-  })
-
-  it('normalizes extra whitespace', () => {
-    expect(stripMarkers('a  b')).toBe('a b')
   })
 })

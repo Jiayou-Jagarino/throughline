@@ -1,3 +1,4 @@
+import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import yaml from 'js-yaml'
@@ -50,6 +51,17 @@ export class SessionStore {
         console.error(`[throughline] Failed to create .gitignore: ${(err as Error).message}`)
       }
     }
+
+    // Auto-init git if the directory isn't already a repository
+    const gitDir = path.join(this.root, '.git')
+    if (!fs.existsSync(gitDir)) {
+      try {
+        execSync('git init', { cwd: this.root, stdio: 'pipe', timeout: 10000 })
+        console.error('[throughline] git init: initialized new repository')
+      } catch (err) {
+        console.error(`[throughline] git init: skipped (${(err as Error).message})`)
+      }
+    }
   }
 
   isInitialized(): boolean {
@@ -77,7 +89,18 @@ export class SessionStore {
   }
 
   createSession(goal: string, agent: Agent = 'claude-code', parent?: { id: string; relation: SessionRelation }): IntentGraph {
-    const id = this.nextSessionId()
+    let id: string
+    if (parent) {
+      id = `${parent.id}-${parent.relation}`
+      // Handle multiple resumes of the same parent
+      if (this.getSessionById(id)) {
+        let counter = 2
+        while (this.getSessionById(`${id}-${counter}`)) counter++
+        id = `${id}-${counter}`
+      }
+    } else {
+      id = this.nextSessionId()
+    }
     const graph: IntentGraph = {
       session: {
         id,
@@ -107,6 +130,11 @@ export class SessionStore {
     try {
       this._writeAtomic(archivePath, yaml.dump(graph, { lineWidth: 120 }))
       fs.unlinkSync(this.sessionFile)
+      // Clear stale context file so it reflects closed state
+      const ctxPath = path.join(this.intentDir, 'context.txt')
+      if (fs.existsSync(ctxPath)) {
+        fs.writeFileSync(ctxPath, '# Throughline: session closed\n', 'utf8')
+      }
     } finally {
       this._releaseLock()
     }
@@ -225,7 +253,7 @@ export class SessionStore {
               continue
             }
           } catch {}
-          for (let spin = 0; spin < 5; spin++) {}
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_RETRY_MS)
           continue
         }
         return false

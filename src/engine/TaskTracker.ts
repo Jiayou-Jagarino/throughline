@@ -80,7 +80,7 @@ export class TaskTracker {
     for (const task of graph.tasks) {
       if (task.status !== 'in_progress' && task.status !== 'deviated') continue
       for (const step of task.steps) {
-        if (step.status === 'in_progress') {
+        if (step.status === 'in_progress' || step.status === 'pending') {
           if (!step.files.touched.includes(filePath)) {
             step.files.touched.push(filePath)
           }
@@ -89,6 +89,15 @@ export class TaskTracker {
         }
       }
     }
+
+    // Fallback: no active task/step — store at session level as a note
+    graph.session.notes.push({
+      text: `File touched (no active task): ${filePath}`,
+      recorded_at: new Date().toISOString(),
+      source: 'ai',
+      category: 'context',
+    })
+    this.store.write(graph)
   }
 
   setStepStatus(taskId: string, stepId: string, status: Status): void {

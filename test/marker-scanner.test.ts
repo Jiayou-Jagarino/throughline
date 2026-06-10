@@ -50,13 +50,14 @@ describe('MarkerScanner', () => {
     })
   })
 
-  it('detects step done marker only once', () => {
+  it('detects step done markers across multiple feeds', () => {
     const scanner = new MarkerScanner()
     const handler = vi.fn()
     scanner.onStepDone(handler)
     scanner.feed('[THROUGHLINE:STEP_DONE]')
-    scanner.feed('[THROUGHLINE:STEP_DONE]')
     expect(handler).toHaveBeenCalledTimes(1)
+    scanner.feed('more output [THROUGHLINE:STEP_DONE]')
+    expect(handler).toHaveBeenCalledTimes(2)
   })
 
   it('detects step done after other markers in buffer', () => {

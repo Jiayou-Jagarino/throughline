@@ -7,7 +7,7 @@ const program = new Command()
 program
   .name('throughline')
   .description('Intent-first AI coding session tracker')
-  .version('0.2.0')
+  .version('0.3.0')
 
 program
   .command('init')

@@ -68,7 +68,7 @@ describe('ContextBuilder', () => {
     it('shows session notes', () => {
       store.addNote('important note', 'developer', 'decision')
       const block = ctx.buildContextBlock()
-      expect(block).toContain('Session notes')
+      expect(block).toContain('Key decisions')
       expect(block).toContain('important note')
     })
 

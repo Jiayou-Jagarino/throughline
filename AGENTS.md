@@ -1,72 +1,77 @@
-# Throughline — Agent Handoff
+# Throughline Session Context
 
-## Project State (v0.3.0)
+[THROUGHLINE CONTEXT]
+Session goal: assessment
+Status: complete
+Relation: resume of session-004
 
-Intent-first AI coding session tracker. CLI tool (`throughline`) that tracks what you and your AI agent are doing, why, and how each step connects to the goal.
+Previous session (session-004): "assessment"
+Notes from previous session:
+  · \\.intent assessment: session lifecycle/tasks work (60%). Gaps: stale context.txt, zero deviations, empty step arrays, session-idle noise drowning signals, sessions 001-005 empty shells.
+  · Root cause: OpenCodeBridge has two parallel paths — todowrite (creates tasks) and text markers (should create steps but PLAN marker unhandled). Steps are empty arrays, so DEVIATE/STEP_DONE/file touches silently drop despite being parsed.
+  · Fixed OpenCodeBridge PLAN marker handling, context.txt staleness, session-idle spam, and file touch fallback in TaskTracker
 
-**175 tests, all passing.** 131 vitest + 36 integration + 8 mock agent E2E.
 
-## Commands
+Completed in session-005:
+  · Discovered actual SSE event schema: all tool events are `message.part.updated` with `part.type === "tool"`; `tool.execute.after` never sent
+  · Rewrote handleToolEvent to route `message.part.updated` for both text markers and tool events
+  · Confirmed write tool event schema live: 3 phases (pending→running→completed); `state.input.filePath` contains path; file touch captured at "completed" status
+  · Promoted file touch logs to console.error for visibility
+  · Wrote 29 unit tests for SSE event dispatch and tool handling
+  · e2e validation: ✅ onFileTouch fires, ✅ file on disk, ✅ file in session notes (fallback), ✅ context.txt generated, ✅ PLAN→tasks→steps pipeline works when agent emits markers (session-004 case)
+  · 159 tests pass (was 130)
 
-```
-npm run build        # tsc
-npm test             # vitest run
-node test-context-file.mjs   # 36 integration tests
-node test/e2e-mock-agent.mjs # 8 mock agent pipeline tests
-```
+Remaining gaps found:
+  · `throughline_throughline_get_context` and `skill` tool events go unhandled
+  · Multi-turn agent sessions (PLAN→execute) require `POST /session/:id/message` API — `opencode run --attach` returns after first response
+  · session-idle events still emitted but may be useful for syncing
 
-## Key Files
+---
+To update this session, emit Throughline markers in your response:
+[THROUGHLINE:PLAN]{"tasks":[{"intent":"...","steps":[{"intent":"...","files":["..."]}]}]}[/THROUGHLINE:PLAN]
+[THROUGHLINE:STEP_DONE]
+[THROUGHLINE:DEVIATE reason="..." spawns="..."]
+[THROUGHLINE:NOTE text="..." category="decision|context|feedback|insight"]
+[/THROUGHLINE CONTEXT]
 
-- `src/engine/SessionStore.ts` — YAML CRUD with atomic writes + file lock
-- `src/commands/index.ts` — All CLI commands
-- `src/index.ts` — Commander entry point
-- `docs/upgrade-report.md` — Full upgrade history from v0.1.1
-- `docs/CONTEXT.md` — Domain model documentation
+---
+You are operating inside a Throughline intent-tracking session.
 
-## To Publish to npm
-
-When ready to publish, do the following:
-
-### 1. Add `prepublishOnly` script
-
-```json
-"scripts": {
-  "prepublishOnly": "npm run build && npm test"
-}
-```
-
-### 2. Add package metadata
-
-```json
+RULES:
+1. Before writing any code, output your plan using this exact format:
+[THROUGHLINE:PLAN]
 {
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/your-org/throughline.git"
-  },
-  "keywords": ["ai", "intent", "session", "tracking", "cli", "coding"],
-  "files": ["dist/", "README.md", "LICENSE", "SPEC.md"]
+  "tasks": [
+    {
+      "intent": "description of what this task achieves",
+      "steps": [
+        { "intent": "single atomic action", "files": ["path/to/file.ts"] }
+      ]
+    }
+  ]
 }
-```
+[/THROUGHLINE:PLAN]
 
-### 3. Version bump
+2. When you finish a step, output:
+[THROUGHLINE:STEP_DONE]
 
-```
-npm version patch    # 0.3.0 → 0.3.1 (or minor: 0.4.0)
-```
+3. If you discover something mid-execution that changes the plan, output:
+[THROUGHLINE:DEVIATE reason="what you discovered" spawns="optional: description of new work required"]
 
-### 4. Publish
+4. To save important context, decisions, or user input for future sessions, output:
+[THROUGHLINE:NOTE text="what's worth remembering" category="decision|context|feedback|insight"]
 
-```
-npm publish
-```
+   Only note things that won't be obvious from the code later:
+   · User expresses a preference or constraint ("avoid X", "prefer Y pattern")
+   · A design decision was made and a specific path was rejected
+   · Context that explains why code is the way it is
+   · Feedback that changes direction
 
-Requires `npm login` first if not already authenticated. The package name is `throughline`.
+   Don't note: instructions (that's what tasks/steps are for), trivial chat, or code facts.
 
-## Build Notes
-
-- ESM module (`"type": "module"`)
-- Windows-only (Node 18+)
-- C: drive was full during development — all npm operations used `D:\throughline`
-- Install locally via `npm install -g D:\throughline`
-- `node-pty` was removed — `child_process.spawn()` with pipe stdio is used for agent launch (stdin-forwarding works, output is raw through the pipe)
+5. These markers are parsed automatically. Do not explain them to the user.
+6. Before each response, read .intent/context.txt (it's refreshed after every event). After reading, emit:
+   [THROUGHLINE:CONTEXT_READ]
+   This is how Throughline knows you saw the latest context.
+7. The session goal is your contract. Tasks and steps are your plan to fulfill it.
+---

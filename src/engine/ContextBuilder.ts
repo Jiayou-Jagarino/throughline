@@ -7,6 +7,7 @@ export class ContextBuilder {
   private store: SessionStore
   private _readWatcherHandle?: ReturnType<typeof setInterval>
   private _lastWriteAt: number = 0
+  private _lastIdleTime: number = 0
 
   constructor(store: SessionStore) {
     this.store = store
@@ -20,6 +21,9 @@ export class ContextBuilder {
     return path.join(this.store.intentDir, 'context-audit.log')
   }
 
+  // Log whenever context.txt is read — by the agent (via MCP), by the
+  // filesystem watcher, or by other tool events. The audit trail helps
+  // diagnose whether the agent is seeing stale context.
   logContextRead(source: string = 'agent'): void {
     try {
       const entry = `[${new Date().toISOString()}] trigger=context-read source=${source} session=${this.store.hasActiveSession() ? this.store.read().session.id : 'none'}\n`
@@ -65,6 +69,15 @@ export class ContextBuilder {
 
   writeContextFile(trigger: string, parentGraph?: IntentGraph): void {
     if (!this.store.hasActiveSession() && !this.store.isInitialized()) return
+
+    // Session-idle dedup: OpenCode fires idle on every response chunk. We
+    // skip consecutive idles within 5 seconds to avoid thrashing context.txt.
+    if (trigger === 'session-idle') {
+      const now = Date.now()
+      if (now - this._lastIdleTime < 5000) return
+      this._lastIdleTime = now
+    }
+
     try {
       const block = this.buildContextBlock(parentGraph)
       fs.writeFileSync(this.contextFilePath, block, 'utf8')
@@ -89,9 +102,14 @@ export class ContextBuilder {
     const currentTask = tasks.find(t => t.status === 'in_progress' || t.status === 'deviated')
     const pendingTasks = tasks.filter(t => t.status === 'pending').map(t => `  · ${t.intent}`).join('\n')
     const deviations = tasks.flatMap(t => t.steps.filter(s => s.deviation)).length
+    const decisionNotes = session.notes.filter(n => n.category === 'decision')
+    const instructionNotes = session.notes.filter(n => n.category === 'instruction')
+    const contextNotes = session.notes.filter(n => n.category === 'context')
+    const insightNotes = session.notes.filter(n => n.category === 'insight')
 
     let block = `[THROUGHLINE CONTEXT]\n`
     block += `Session goal: ${session.goal}\n`
+    block += `Session ID: ${session.id}\n`
     block += `Status: ${session.status}\n`
 
     if (session.relation && session.parent_session) {
@@ -112,9 +130,32 @@ export class ContextBuilder {
       if (parentNotes) block += `Notes from previous session:\n${parentNotes}\n`
     }
 
-    if (session.notes.length > 0) {
-      block += `\nSession notes:\n`
-      session.notes.forEach(n => block += `  · ${n.text}\n`)
+    // Show decisions prominently — they're the most critical for resumed agents
+    if (decisionNotes.length > 0) {
+      block += `\nKey decisions:\n`
+      decisionNotes.forEach(n => block += `  · ${n.text}\n`)
+    }
+
+    if (instructionNotes.length > 0) {
+      block += `\nInstructions given (last first):\n`
+      instructionNotes.slice(-3).reverse().forEach(n => block += `  → ${n.text}\n`)
+    }
+
+    if (contextNotes.length > 0) {
+      block += `\nContext:\n`
+      contextNotes.slice(-5).forEach(n => block += `  · ${n.text}\n`)
+    }
+
+    if (insightNotes.length > 0) {
+      block += `\nInsights:\n`
+      insightNotes.slice(-5).forEach(n => block += `  · ${n.text}\n`)
+    }
+
+    // Unclassified notes
+    const uncategorized = session.notes.filter(n => !n.category || !['decision', 'instruction', 'context', 'insight'].includes(n.category))
+    if (uncategorized.length > 0) {
+      block += `\nNotes:\n`
+      uncategorized.forEach(n => block += `  · ${n.text}\n`)
     }
 
     block += '\n'
@@ -132,6 +173,9 @@ export class ContextBuilder {
         if (currentStep.files.planned.length > 0) {
           block += `  Planned files: ${currentStep.files.planned.join(', ')}\n`
         }
+        if (currentStep.files.touched.length > 0) {
+          block += `  Files touched: ${currentStep.files.touched.join(', ')}\n`
+        }
       }
       if (pendingSteps) block += `  Pending steps:\n${pendingSteps}\n`
     }
@@ -144,7 +188,7 @@ export class ContextBuilder {
     block += `[THROUGHLINE:PLAN]{"tasks":[{"intent":"...","steps":[{"intent":"...","files":["..."]}]}]}[/THROUGHLINE:PLAN]\n`
     block += `[THROUGHLINE:STEP_DONE]\n`
     block += `[THROUGHLINE:DEVIATE reason="..." spawns="..."]\n`
-    block += `[THROUGHLINE:NOTE text="..." category="decision|context|feedback|insight"]\n`
+    block += `[THROUGHLINE:NOTE text="..." category="decision|context|feedback|insight|instruction"]\n`
     block += `[/THROUGHLINE CONTEXT]`
     return block
   }

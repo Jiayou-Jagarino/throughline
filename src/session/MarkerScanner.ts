@@ -1,4 +1,4 @@
-import { parseDeviationMarkers, parsePlanMarker, parseNoteMarkers, hasStepDoneMarker } from '../parsers/deviationParser.js'
+import { parseDeviationMarkers, parsePlanMarker, parseNoteMarkers } from '../parsers/deviationParser.js'
 
 export interface DeviationEvent {
   reason: string
@@ -24,7 +24,7 @@ export class MarkerScanner {
   private buffer = ''
   private lastDeviationCount = 0
   private planCaptured = false
-  private stepDoneDetected = false
+  private stepDoneCount = 0
   private lastNoteCount = 0
   private contextReadCount = 0
   private _onDeviation?: (event: DeviationEvent) => void
@@ -79,8 +79,10 @@ export class MarkerScanner {
       }
     }
 
-    if (!this.stepDoneDetected && hasStepDoneMarker(clean)) {
-      this.stepDoneDetected = true
+    const stepDoneMatches = clean.match(/\[THROUGHLINE:STEP_DONE\]/g)
+    const matchCount = stepDoneMatches ? stepDoneMatches.length : 0
+    if (matchCount > this.stepDoneCount) {
+      this.stepDoneCount = matchCount
       this._onStepDone?.()
     }
 
@@ -107,7 +109,7 @@ export class MarkerScanner {
     this.buffer = ''
     this.lastDeviationCount = 0
     this.planCaptured = false
-    this.stepDoneDetected = false
+    this.stepDoneCount = 0
     this.lastNoteCount = 0
     this.contextReadCount = 0
   }

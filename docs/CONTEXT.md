@@ -64,6 +64,41 @@ The `[THROUGHLINE CONTEXT]` block is the primary communication mechanism between
 
 The agent reads this via `.intent/context.txt` (file) or `throughline_get_context` (MCP tool). After reading, it emits `[THROUGHLINE:CONTEXT_READ]` so Throughline can confirm the agent saw the latest state.
 
+## Agent Strategies
+
+Throughline supports two agent strategies:
+
+### Wrap strategy (claude-code, gemini-cli)
+
+- Spawns agent as child process, pipes stdio
+- `MarkerScanner` parses `[THROUGHLINE:...]` markers from stdout
+- File changes detected via `FileWatcher` (chokidar)
+- Agent exit triggers session close or prompt
+
+### OpenCode bridge strategy
+
+- Starts `opencode serve` on port 4096
+- `OpenCodeBridge.ts` connects to the SSE event stream at `GET /event`
+- Events are `message.part.updated` with `part.type === "text"` (for markers) or `part.type === "tool"` (for tool calls)
+- Tool events go through 3 phases: `pending → running → completed`; file writes are captured at `completed`
+- Opens a terminal window with `opencode attach` for interactive use
+- When the window closes, shows a post-session menu (status / done / keep open)
+
+## SSE Event Routing
+
+OpenCode does not emit `tool.execute.after` events. All agent tool activity arrives as:
+
+| Event | `event.type` | `part.type` | What we do |
+|-------|-------------|-------------|------------|
+| Session created | `session.created` | — | Capture session ID, notify `onSessionCreated` |
+| Agent idle | `session.idle` | — | Flush context.txt, sync todos |
+| Agent idle (alt) | `session.status` | — | Same as `session.idle` |
+| Markers (PLAN, etc.) | `message.part.updated` | `text` | Parse Throughline markers |
+| File writes | `message.part.updated` | `tool` | Capture path at `completed` phase |
+| Shell commands | `message.part.updated` | `tool` | Detect git ops and file writes |
+| MCP queries | `message.part.updated` | `tool` | Log via `debug()`, no state change |
+| Todo sync | `message.part.updated` | `tool` | Update local todo list |
+
 ## Read Detection
 
 Reads are tracked from 4 sources:
@@ -71,5 +106,6 @@ Reads are tracked from 4 sources:
 - **agent** — `[THROUGHLINE:CONTEXT_READ]` marker in stdout (precise)
 - **attach** — human terminal session (precise)
 - **filesystem** — atime polling with mtime guard (fuzzy)
+- **mcp-tool** — SSE-detected agent MCP calls (precise, via `handleToolEvent`)
 
 The filesystem watcher uses atime changes to detect reads, with an mtime guard to exclude writes. On the target Windows system, `statSync` does not update atime — only `readFileSync` does.

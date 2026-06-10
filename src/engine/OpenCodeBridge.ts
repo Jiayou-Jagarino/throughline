@@ -209,6 +209,8 @@ export class OpenCodeBridge {
           this.openCodeSessionId = sid
           debug('OpenCode session created:', sid)
           this.opts.onSessionCreated?.(sid)
+        } else {
+          debug('session.created with no ID — event:', JSON.stringify(props))
         }
         break
       }
@@ -310,10 +312,25 @@ export class OpenCodeBridge {
     this.lastTodos = todos
     this.opts.onTodoUpdate?.(todos)
 
-    // Map OpenCode todos to Throughline tasks if no tasks exist yet
     if (!this.store.hasActiveSession()) return
     const graph = this.store.read()
-    if (graph.tasks.length > 0) return // already have a plan
+
+    // If tasks already exist (from a PLAN marker), update their statuses
+    if (graph.tasks.length > 0) {
+      let changed = false
+      for (const todo of todos) {
+        const task = graph.tasks.find(t => t.intent === todo.content)
+        if (task && task.status !== this.mapTodoStatus(todo.status)) {
+          task.status = this.mapTodoStatus(todo.status)
+          changed = true
+        }
+      }
+      if (changed) {
+        this.store.write(graph)
+        this.contextBuilder.writeContextFile('todo-update')
+      }
+      return
+    }
 
     // Convert todo list to Throughline tasks
     const tasks = todos.map(t => ({
@@ -460,6 +477,7 @@ export class OpenCodeBridge {
             deviation: null,
             completed_at: null,
           }))
+          existing.status = 'in_progress'
           merged = true
         }
       }
@@ -513,18 +531,6 @@ export class OpenCodeBridge {
       if (!cmd) return
       if (/git\s+(add|commit)/.test(cmd)) {
         this.contextBuilder.writeContextFile('git-op')
-      }
-      const fileWrites = cmd.match(
-        /(?:sed\s+-i\s+.*?['"](.+?)['"]|(?:\|\s*)?cat\s*>\s*(\S+)|(?:^|\s*)(?:echo|printf)\s+.*?(?:>\s*(\S+))|>>\s*(\S+)|mv\s+\S+\s+(\S+)|cp\s+\S+\s+(\S+)|npx\s+\S+\s+.*?--(?:out|output|file)\s+(\S+)|New-Item\s+(?:-Path\s+)?['"]?(\S+)['"]?|Out-File\s+(?:-FilePath\s+)?['"]?(\S+)['"]?|Set-Content\s+(?:-Path\s+)?['"]?(\S+)['"]?)/
-      )
-      if (fileWrites) {
-        const f = fileWrites.find((_, i) => i > 0 && fileWrites[i])
-        if (f) {
-          const relative = toRelative(f, this.store.rootDir)
-          this.tracker.recordFileTouched(relative)
-          this.contextBuilder.writeContextFile('file-touch')
-          console.error(`[throughline] File written via shell: ${relative}`)
-        }
       }
     } else if (isTodoTool) {
       const todos = (

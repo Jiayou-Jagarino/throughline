@@ -7,7 +7,6 @@
 //           (claude-code, gemini-cli)
 //   bridge — starts opencode serve + SSE listener, opens attach terminal
 //           (opencode)
-//           (opencode)
 import chalk from 'chalk'
 import chokidar from 'chokidar'
 import readline from 'readline'

@@ -257,7 +257,7 @@ describe('OpenCodeBridge SSE event dispatch', () => {
   })
 
   describe('message.part.updated — tool (bash)', () => {
-    it('records file touch when shell writes a file', () => {
+    it('does not extract file writes from bash commands (handled by write tool)', () => {
       const tracker = createMockTracker()
       const bridge = createMockBridge(undefined, tracker)
       dispatch(bridge, 'message.part.updated', {
@@ -267,10 +267,10 @@ describe('OpenCodeBridge SSE event dispatch', () => {
           state: { status: 'completed', input: { command: 'New-Item -Path test.txt' } },
         },
       })
-      expect(tracker.recordFileTouched).toHaveBeenCalledWith('test.txt')
+      expect(tracker.recordFileTouched).not.toHaveBeenCalled()
     })
 
-    it('detects Out-File in PowerShell commands', () => {
+    it('does not extract writes from Out-File (handled by write tool)', () => {
       const tracker = createMockTracker()
       const bridge = createMockBridge(undefined, tracker)
       dispatch(bridge, 'message.part.updated', {
@@ -280,10 +280,10 @@ describe('OpenCodeBridge SSE event dispatch', () => {
           state: { status: 'completed', input: { command: 'Get-Process | Out-File -FilePath proc.txt' } },
         },
       })
-      expect(tracker.recordFileTouched).toHaveBeenCalledWith('proc.txt')
+      expect(tracker.recordFileTouched).not.toHaveBeenCalled()
     })
 
-    it('detects Set-Content in PowerShell commands', () => {
+    it('does not extract writes from Set-Content (handled by write tool)', () => {
       const tracker = createMockTracker()
       const bridge = createMockBridge(undefined, tracker)
       dispatch(bridge, 'message.part.updated', {
@@ -293,7 +293,7 @@ describe('OpenCodeBridge SSE event dispatch', () => {
           state: { status: 'completed', input: { command: "Set-Content -Path notes.txt 'hello'" } },
         },
       })
-      expect(tracker.recordFileTouched).toHaveBeenCalledWith('notes.txt')
+      expect(tracker.recordFileTouched).not.toHaveBeenCalled()
     })
 
     it('detects git add/commit commands', () => {

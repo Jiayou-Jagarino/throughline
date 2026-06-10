@@ -1,3 +1,9 @@
+// ─── Task state machine ──────────────────────────────────────────────────
+// Manages the lifecycle of tasks and steps within a session. Tasks and steps
+// progress through: pending → in_progress → complete (or → deviated).
+// File touches are tracked per-step, and unassigned touches fall back to
+// session-level notes.
+// session-level notes.
 import type { IntentGraph, TaskIntent, StepIntent, Deviation, Status } from '../types.js'
 import { SessionStore } from './SessionStore.js'
 
@@ -8,6 +14,7 @@ export class TaskTracker {
     this.store = store
   }
 
+  // ─── Add tasks from a PLAN marker ────────────────────────────────────────
   addTasks(tasks: Omit<TaskIntent, 'id'>[]): IntentGraph {
     const graph = this.store.read()
     const startIdx = graph.tasks.length + 1
@@ -25,6 +32,7 @@ export class TaskTracker {
     return graph
   }
 
+  // ─── Mark a step complete; auto-close task/session if all done ───────────
   completeStep(taskId: string, stepId: string): IntentGraph {
     const graph = this.store.read()
     const task = graph.tasks.find(t => t.id === taskId)
@@ -45,6 +53,7 @@ export class TaskTracker {
     return graph
   }
 
+  // ─── Record a deviation on a task/step; optionally spawn a new task ─────
   recordDeviation(taskId: string, stepId: string, deviation: Deviation): IntentGraph {
     const graph = this.store.read()
     const task = graph.tasks.find(t => t.id === taskId)
@@ -73,6 +82,7 @@ export class TaskTracker {
     return graph
   }
 
+  // ─── Record a file touch on the active step; fall back to session note ──
   recordFileTouched(filePath: string): void {
     if (!this.store.hasActiveSession()) return
     const graph = this.store.read()

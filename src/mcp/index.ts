@@ -1,4 +1,10 @@
-#!/usr/bin/env node
+// ─── MCP server ──────────────────────────────────────────────────────────
+// Exposes Throughline session data to AI agents via the Model Context
+// Protocol (stdio transport). Agents call throughline_get_context and
+// throughline_status to read current session state.
+//
+// This is consumed by the agent's MCP runtime when running in OpenCode
+// mode (the bridge detects these calls via SSE tool events).
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import * as z from 'zod/v4'
@@ -156,6 +162,8 @@ server.registerTool(
     }
   },
 )
+
+// ─── Main ────────────────────────────────────────────────────────────────
 
 async function main() {
   const transport = new StdioServerTransport()

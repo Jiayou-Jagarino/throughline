@@ -1,3 +1,7 @@
+// ─── Core domain types ───────────────────────────────────────────────────
+// These types define the intent graph: a session contains tasks, tasks
+// contain steps, steps track planned/touched files and deviations.
+
 export type Status = 'pending' | 'in_progress' | 'complete' | 'abandoned' | 'deviated'
 export type DeclaredBy = 'developer' | 'ai'
 export type Agent = 'claude-code' | 'opencode' | 'gemini-cli' | 'other'

@@ -1,3 +1,6 @@
+// Debug logger — gated behind THROUGHLINE_DEBUG env var.
+// Silent by default; use for internal diagnostics that should not clutter
+// normal CLI output.
 const DEBUG_ENABLED = typeof process !== 'undefined' && (
   process.env.THROUGHLINE_DEBUG === '1' ||
   process.env.THROUGHLINE_DEBUG === 'true'

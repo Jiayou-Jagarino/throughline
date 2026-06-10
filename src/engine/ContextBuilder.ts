@@ -1,3 +1,7 @@
+// ─── Context builder ────────────────────────────────────────────────────
+// Generates and persists the [THROUGHLINE CONTEXT] block (context.txt) that
+// agents read to understand session state. Triggers on every event: idle,
+// file touch, marker, command. Also monitors external reads via stat atime.
 import fs from 'fs'
 import path from 'path'
 import type { IntentGraph } from '../types.js'
@@ -33,6 +37,9 @@ export class ContextBuilder {
     }
   }
 
+  // ─── Read watcher (filesystem) ──────────────────────────────────────────
+  // Polls context.txt's atime every 5s. If atime advances without mtime
+  // changing, an external process (the agent) read the file. Logs to audit.
   startReadWatcher(intervalMs: number = 5000): void {
     if (this._readWatcherHandle) return
     if (!fs.existsSync(this.contextFilePath)) return
@@ -67,6 +74,10 @@ export class ContextBuilder {
     }
   }
 
+  // ─── Write context.txt ──────────────────────────────────────────────────
+  // Builds the context block from current session state and writes it to
+  // .intent/context.txt. The trigger parameter identifies what caused the
+  // write and is logged in the audit trail.
   writeContextFile(trigger: string, parentGraph?: IntentGraph): void {
     if (!this.store.hasActiveSession() && !this.store.isInitialized()) return
 
@@ -94,6 +105,10 @@ export class ContextBuilder {
     }
   }
 
+  // ─── Build the context block ────────────────────────────────────────────
+  // Assembles the [THROUGHLINE CONTEXT] string from the current graph:
+  // session goal, task tree, current step, deviations, notes. Optionally
+  // includes parent session context for resume/repair/continue sessions.
   buildContextBlock(parentGraph?: IntentGraph): string {
     const graph = this.store.read()
     const { session, tasks } = graph

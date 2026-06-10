@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// CLI entry point. Registers all throughline commands with commander and
+// delegates to command handlers in src/commands/index.ts.
 import { Command } from 'commander'
 import { cmdInit, cmdStart, cmdStatus, cmdDeviate, cmdDone, cmdNote, cmdResume, cmdRepair, cmdContinue, cmdHistory, cmdAttach } from './commands/index.js'
 

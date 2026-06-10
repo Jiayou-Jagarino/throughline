@@ -1,3 +1,11 @@
+// ─── Marker scanner ──────────────────────────────────────────────────────
+// Buffers streaming agent stdout, strips ANSI codes, and dispatches
+// Throughline markers (PLAN, STEP_DONE, DEVIATE, NOTE, CONTEXT_READ) via
+// callbacks. Used in the "wrap" strategy where throughline pipes the
+// agent's stdio (claude-code, gemini-cli).
+//
+// Differs from OpenCodeBridge's SSE approach: this is text-based scanning
+// of raw terminal output, while the bridge parses structured SSE events.
 import { parseDeviationMarkers, parsePlanMarker, parseNoteMarkers } from '../parsers/deviationParser.js'
 
 export interface DeviationEvent {

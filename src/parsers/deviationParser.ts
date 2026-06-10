@@ -1,4 +1,7 @@
-// Parses [THROUGHLINE:DEVIATE ...] markers from AI agent stdout
+// ─── Marker parsers ──────────────────────────────────────────────────────
+// Parses [THROUGHLINE:DEVIATE], [THROUGHLINE:PLAN], [THROUGHLINE:STEP_DONE],
+// [THROUGHLINE:NOTE], and [THROUGHLINE:CONTEXT_READ] markers from AI agent
+// stdout. These markers let the agent report intent back to Throughline.
 // Format: [THROUGHLINE:DEVIATE reason="..." spawns="optional new task description"]
 
 export interface DeviationMarker {
@@ -93,7 +96,10 @@ export function stripMarkers(output: string): string {
     .trim()
 }
 
-// The system prompt injection that teaches the AI about Throughline markers
+// ─── System prompt builder ───────────────────────────────────────────────
+// Injects the session context block and Throughline marker rules into the
+// agent's system prompt. This is how the agent learns about the session
+// goal, pending tasks, and the marker protocol.
 export function buildAgentSystemPrompt(contextBlock: string): string {
   return `${contextBlock}
 

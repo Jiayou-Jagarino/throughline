@@ -1,3 +1,7 @@
+// ─── Session persistence ─────────────────────────────────────────────────
+// File-backed YAML store for session state. Reads/writes .intent/session.yml
+// with file locking and atomic writes. Manages lifecycle: init, create,
+// read, write, close. Archives closed sessions to .intent/history/.
 import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
@@ -23,6 +27,9 @@ export class SessionStore {
   get sessionFile() { return path.join(this.intentDir, SESSION_FILE) }
   get historyDir() { return path.join(this.intentDir, HISTORY_DIR) }
 
+  // ─── Initialize .intent/ directory ──────────────────────────────────────
+  // Creates .intent/, copies SPEC.md, sets up .gitignore, and auto-inits
+  // git if the project isn't already a repository.
   init(): void {
     if (!fs.existsSync(this.intentDir)) {
       fs.mkdirSync(this.intentDir, { recursive: true })
@@ -88,6 +95,9 @@ export class SessionStore {
     }
   }
 
+  // ─── Create a new session ────────────────────────────────────────────────
+  // Generates a sequential session ID (session-001, session-002, ...).
+  // For resume/repair/continue, derives ID from the parent session.
   createSession(goal: string, agent: Agent = 'claude-code', parent?: { id: string; relation: SessionRelation }): IntentGraph {
     let id: string
     if (parent) {
@@ -120,6 +130,9 @@ export class SessionStore {
     return graph
   }
 
+  // ─── Close session and archive ───────────────────────────────────────────
+  // Sets final status, archives to .intent/history/<id>.yml, removes
+  // session.yml, clears context.txt.
   closeSession(status: 'complete' | 'abandoned' = 'complete'): void {
     const graph = this.read()
     graph.session.status = status
@@ -233,6 +246,10 @@ export class SessionStore {
     }
   }
 
+  // ─── File locking ───────────────────────────────────────────────────────
+  // Simple lock file (`.session.lock`) with retry and stale-lock cleanup
+  // (5s TTL). Prevents concurrent writes from corrupting session.yml.
+
   private _lockFilePath(): string {
     return path.join(this.intentDir, LOCK_FILE)
   }
@@ -266,6 +283,9 @@ export class SessionStore {
     try { fs.unlinkSync(this._lockFilePath()) } catch {}
   }
 
+  // ─── Atomic write ───────────────────────────────────────────────────────
+  // Writes to .tmp then renames to target. Prevents partial reads during
+  // crashes. Throws a clear error on ENOSPC (disk full).
   private _writeAtomic(filePath: string, content: string): void {
     const tmpPath = filePath + '.tmp'
     try {

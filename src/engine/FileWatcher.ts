@@ -1,3 +1,7 @@
+// ─── File watcher ────────────────────────────────────────────────────────
+// Watches the project directory via chokidar, detects file changes, and
+// flags unplanned edits (files not listed in the current step's planned set).
+// Used in both wrap and OpenCode bridge modes.
 import chokidar from 'chokidar'
 import path from 'path'
 import type { SessionStore } from './SessionStore.js'
@@ -55,6 +59,7 @@ export class FileWatcher {
     this.unplannedFiles = []
   }
 
+  // ─── Detect unplanned file edits ────────────────────────────────────────
   private handleChange(filePath: string): void {
     if (!this.store.hasActiveSession()) return
 

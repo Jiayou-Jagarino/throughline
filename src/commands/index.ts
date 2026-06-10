@@ -1,3 +1,13 @@
+// ─── Command handlers ────────────────────────────────────────────────────
+// All CLI command implementations. Each exported cmd* function corresponds
+// to a throughline subcommand registered in src/index.ts.
+//
+// Two agent strategies:
+//   wrap  — spawns agent as child process, pipes stdio, scans markers
+//           (claude-code, gemini-cli)
+//   bridge — starts opencode serve + SSE listener, opens attach terminal
+//           (opencode)
+//           (opencode)
 import chalk from 'chalk'
 import chokidar from 'chokidar'
 import readline from 'readline'
@@ -18,6 +28,10 @@ import { debug } from '../utils/logger.js'
 import type { Agent, IntentGraph } from '../types.js'
 
 const AgentSchema = z.enum(['claude-code', 'opencode', 'gemini-cli', 'other'])
+
+// ─── Agent detection ─────────────────────────────────────────────────────
+// Auto-detects which AI agent is installed (claude-code, opencode,
+// gemini-cli) by trying `where`/`which` in priority order.
 
 function resolveAgent(raw: string | undefined): Agent {
   if (!raw) return detectAgent()
@@ -477,7 +491,8 @@ export async function cmdAttach(options: { cwd?: string; watchDepth?: number } =
   console.log(chalk.green('✓ Session closed'))
 }
 
-// ─── Agent launcher ───────────────────────────────────────────────────────
+// ─── Agent launcher ─────────────────────────────────────────────────────
+// Routes to the correct launch strategy based on agent type.
 
 async function launchAgent(
   agent: Agent,

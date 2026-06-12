@@ -80,7 +80,7 @@ export class OpenCodeBridge {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: false,
       env: safeEnv,
-      shell: false,
+      shell: process.platform === 'win32',
     })
 
     this.serverProcess.stdout?.on('data', (d: Buffer) => debug('opencode-serve:', d.toString().trim()))

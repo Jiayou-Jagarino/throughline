@@ -82,10 +82,10 @@ export class ContextBuilder {
     if (!this.store.hasActiveSession() && !this.store.isInitialized()) return
 
     // Session-idle dedup: OpenCode fires idle on every response chunk. We
-    // skip consecutive idles within 5 seconds to avoid thrashing context.txt.
+    // skip consecutive idles within 30 seconds to avoid thrashing context.txt.
     if (trigger === 'session-idle') {
       const now = Date.now()
-      if (now - this._lastIdleTime < 5000) return
+      if (now - this._lastIdleTime < 30000) return
       this._lastIdleTime = now
     }
 

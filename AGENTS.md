@@ -1,37 +1,76 @@
 # Throughline Session Context
 
 [THROUGHLINE CONTEXT]
-Session goal: assessment
-Status: complete
-Relation: resume of session-004
+Session goal: assessment after breakthrough
+Session ID: session-008-resume
+Status: in_progress
+Relation: resume of session-008
 
-Previous session (session-004): "assessment"
+Previous session (session-008): "assessment after breakthrough"
+Completed in previous session:
+  ✓ Fix 1+4: TaskTracker.ts — path normalization + note dedup in recordFileTouched
+  ✓ Fix 6: ContextBuilder.ts — extend idle dedup window to 30s
 Notes from previous session:
-  · \\.intent assessment: session lifecycle/tasks work (60%). Gaps: stale context.txt, zero deviations, empty step arrays, session-idle noise drowning signals, sessions 001-005 empty shells.
-  · Root cause: OpenCodeBridge has two parallel paths — todowrite (creates tasks) and text markers (should create steps but PLAN marker unhandled). Steps are empty arrays, so DEVIATE/STEP_DONE/file touches silently drop despite being parsed.
-  · Fixed OpenCodeBridge PLAN marker handling, context.txt staleness, session-idle spam, and file touch fallback in TaskTracker
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent\context.txt
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent\context.txt
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent\context-audit.log
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent\context-audit.log
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent\history
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent\history
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent\history\session-007.yml
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent\history\session-007.yml
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent\history\session-006.yml
+  · File touched (no active task): D:\SoftwareCreate\ctech\.intent\history\session-006.yml
+  · File touched (no active task): 
+  · File touched (no active task): 
+  · File touched (no active task): src\engine\TaskTracker.ts
+  · File touched (no active task): src\engine\TaskTracker.ts
+  · File touched (no active task): src\engine\OpenCodeBridge.ts
+  · File touched (no active task): src\engine\OpenCodeBridge.ts
+  · File touched (no active task): src\engine\ContextBuilder.ts
+  · File touched (no active task): src\engine\ContextBuilder.ts
+  · File touched (no active task): src\engine\TaskTracker.ts
+  · File touched (no active task): src\engine\TaskTracker.ts
+  · File touched (no active task): src\engine\OpenCodeBridge.ts
+  · File touched (no active task): src\engine\OpenCodeBridge.ts
+  · File touched (no active task): src\engine\ContextBuilder.ts
+  · File touched (no active task): src\engine\ContextBuilder.ts
+  · File touched (no active task): src\engine\TaskTracker.ts
+  · File touched (no active task): src\engine\TaskTracker.ts
+  · File touched (no active task): src\engine\TaskTracker.ts
+  · File touched (no active task): src\engine\TaskTracker.ts
+  · File touched (no active task): src\engine\OpenCodeBridge.ts
+  · File touched (no active task): src\engine\OpenCodeBridge.ts
+  · File touched (no active task): src\engine\ContextBuilder.ts
+  · File touched (no active task): src\engine\ContextBuilder.ts
+  · File touched (no active task): src\engine\ContextBuilder.ts
+  · File touched (no active task): src\engine\ContextBuilder.ts
+  · File touched (no active task): src\mcp\index.ts
+  · File touched (no active task): src\mcp\index.ts
+  · File touched (no active task): src\types.ts
+  · File touched (no active task): src\types.ts
+  · File touched (no active task): src\engine\SessionStore.ts
+  · File touched (no active task): src\engine\SessionStore.ts
+  · File touched (no active task): src\mcp\index.ts
+  · File touched (no active task): src\mcp\index.ts
+  · File touched (no active task): C:\Users\Thinkpad\.config\opencode\opencode.jsonc
+  · File touched (no active task): C:\Users\Thinkpad\.config\opencode\opencode.jsonc
+  · File touched (no active task): package.json
+  · File touched (no active task): package.json
 
 
-Completed in session-005:
-  · Discovered actual SSE event schema: all tool events are `message.part.updated` with `part.type === "tool"`; `tool.execute.after` never sent
-  · Rewrote handleToolEvent to route `message.part.updated` for both text markers and tool events
-  · Confirmed write tool event schema live: 3 phases (pending→running→completed); `state.input.filePath` contains path; file touch captured at "completed" status
-  · Promoted file touch logs to console.error for visibility
-  · Wrote 29 unit tests for SSE event dispatch and tool handling
-  · e2e validation: ✅ onFileTouch fires, ✅ file on disk, ✅ file in session notes (fallback), ✅ context.txt generated, ✅ PLAN→tasks→steps pipeline works when agent emits markers (session-004 case)
-  · 159 tests pass (was 130)
-
-Remaining gaps found:
-  · `throughline_throughline_get_context` and `skill` tool events go unhandled
-  · Multi-turn agent sessions (PLAN→execute) require `POST /session/:id/message` API — `opencode run --attach` returns after first response
-  · session-idle events still emitted but may be useful for syncing
+Pending tasks:
+  · Fix 3: OpenCodeBridge.ts — handlePlanMarker merge path missing task status
+  · Fix 2 (syncTodosFromPayload): OpenCodeBridge.ts — restore update branch
 
 ---
 To update this session, emit Throughline markers in your response:
 [THROUGHLINE:PLAN]{"tasks":[{"intent":"...","steps":[{"intent":"...","files":["..."]}]}]}[/THROUGHLINE:PLAN]
 [THROUGHLINE:STEP_DONE]
 [THROUGHLINE:DEVIATE reason="..." spawns="..."]
-[THROUGHLINE:NOTE text="..." category="decision|context|feedback|insight"]
+[THROUGHLINE:NOTE text="..." category="decision|context|feedback|insight|instruction"]
 [/THROUGHLINE CONTEXT]
 
 ---

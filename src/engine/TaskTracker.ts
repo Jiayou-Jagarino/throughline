@@ -85,14 +85,15 @@ export class TaskTracker {
   // ─── Record a file touch on the active step; fall back to session note ──
   recordFileTouched(filePath: string): void {
     if (!this.store.hasActiveSession()) return
+    const relative = normalizeToRelative(filePath, this.store.rootDir)
     const graph = this.store.read()
 
     for (const task of graph.tasks) {
       if (task.status !== 'in_progress' && task.status !== 'deviated') continue
       for (const step of task.steps) {
         if (step.status === 'in_progress' || step.status === 'pending') {
-          if (!step.files.touched.includes(filePath)) {
-            step.files.touched.push(filePath)
+          if (!step.files.touched.includes(relative)) {
+            step.files.touched.push(relative)
           }
           this.store.write(graph)
           return
@@ -100,14 +101,20 @@ export class TaskTracker {
       }
     }
 
-    // Fallback: no active task/step — store at session level as a note
-    graph.session.notes.push({
-      text: `File touched (no active task): ${filePath}`,
-      recorded_at: new Date().toISOString(),
-      source: 'ai',
-      category: 'context',
-    })
-    this.store.write(graph)
+    // Fallback: no active task/step — deduplicate before adding note
+    const noteText = `File touched (no active task): ${relative}`
+    const alreadyNoted = graph.session.notes.some(
+      n => n.category === 'context' && n.text === noteText
+    )
+    if (!alreadyNoted) {
+      graph.session.notes.push({
+        text: noteText,
+        recorded_at: new Date().toISOString(),
+        source: 'ai',
+        category: 'context',
+      })
+      this.store.write(graph)
+    }
   }
 
   setStepStatus(taskId: string, stepId: string, status: Status): void {
@@ -130,4 +137,14 @@ export class TaskTracker {
     const task = this.getCurrentTask()
     return task?.steps.find(s => s.status === 'in_progress')
   }
+}
+
+// Normalize absolute or relative path to relative for consistent storage
+function normalizeToRelative(filePath: string, rootDir: string): string {
+  const normalized = filePath.replace(/\\/g, '/')
+  const root = rootDir.replace(/\\/g, '/')
+  if (normalized.startsWith(root)) {
+    return normalized.slice(root.length).replace(/^\//, '')
+  }
+  return filePath.replace(/\\/g, '/')
 }

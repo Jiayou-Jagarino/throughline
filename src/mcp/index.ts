@@ -163,6 +163,124 @@ server.registerTool(
   },
 )
 
+server.registerTool(
+  'throughline_record_deviation',
+  {
+    description: 'Record a deviation on the current step — use when something unexpected changes the plan mid-execution. Stores the reason, optionally spawns a new task.',
+    inputSchema: z.object({
+      reason: z.string().min(1).describe('What went wrong or changed — be specific'),
+      spawns: z.string().optional().describe('Description of a new task spawned by this deviation, if any'),
+    }),
+  },
+  async ({ reason, spawns }) => {
+    try {
+      if (!store.hasActiveSession()) {
+        return { content: [{ type: 'text', text: 'No active session.' }], isError: true }
+      }
+
+      const currentTask = tracker.getCurrentTask()
+      const currentStep = tracker.getCurrentStep()
+      if (!currentTask || !currentStep) {
+        return { content: [{ type: 'text', text: 'No active task/step to deviate from.' }], isError: true }
+      }
+
+      tracker.recordDeviation(currentTask.id, currentStep.id, {
+        reason,
+        spawned_task: spawns || null,
+        recorded_at: new Date().toISOString(),
+      })
+      contextBuilder.writeContextFile('deviation')
+
+      return {
+        content: [{ type: 'text', text: `Deviation recorded on step "${currentStep.intent}": ${reason}` }],
+      }
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      }
+    }
+  },
+)
+
+server.registerTool(
+  'throughline_record_note',
+  {
+    description: 'Record a session note with optional category (decision, context, insight, instruction, feedback). Use for capturing decisions, insights, and important context that future sessions should know about.',
+    inputSchema: z.object({
+      text: z.string().min(1).describe('The note content'),
+      category: z.enum(['decision', 'context', 'insight', 'instruction', 'feedback']).optional().default('context').describe('Category tag for the note'),
+    }),
+  },
+  async ({ text, category }) => {
+    try {
+      if (!store.hasActiveSession()) {
+        return { content: [{ type: 'text', text: 'No active session.' }], isError: true }
+      }
+
+      store.addNote(text, 'ai', category)
+      contextBuilder.writeContextFile('note')
+
+      return {
+        content: [{ type: 'text', text: `Note recorded: ${text}` }],
+      }
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      }
+    }
+  },
+)
+
+server.registerTool(
+  'throughline_step_done',
+  {
+    description: 'Mark the current step as complete and advance to the next pending step. Call this when you finish implementing a step in the plan.',
+    inputSchema: z.object({}),
+  },
+  async () => {
+    try {
+      if (!store.hasActiveSession()) {
+        return { content: [{ type: 'text', text: 'No active session.' }], isError: true }
+      }
+
+      const currentTask = tracker.getCurrentTask()
+      const currentStep = tracker.getCurrentStep()
+      if (!currentTask || !currentStep) {
+        return { content: [{ type: 'text', text: 'No active step to complete.' }], isError: true }
+      }
+
+      const stepIntent = currentStep.intent
+      tracker.completeStep(currentTask.id, currentStep.id)
+      contextBuilder.writeContextFile('step-done')
+
+      const graph = store.read()
+      const task = graph.tasks.find(t => t.id === currentTask.id)!
+      const nextStep = task.steps.find(s => s.status === 'pending')
+
+      let result = `Step completed: "${stepIntent}"`
+      if (nextStep) {
+        tracker.setStepStatus(task.id, nextStep.id, 'in_progress')
+        contextBuilder.writeContextFile('step-advance')
+        result += `\nAdvanced to next step: "${nextStep.intent}"`
+      } else {
+        const allDone = task.steps.every(s => s.status === 'complete' || s.status === 'abandoned')
+        if (allDone) result += '\nAll steps complete — task finished.'
+      }
+
+      return {
+        content: [{ type: 'text', text: result }],
+      }
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      }
+    }
+  },
+)
+
 // ─── Main ────────────────────────────────────────────────────────────────
 
 async function main() {

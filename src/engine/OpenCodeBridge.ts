@@ -40,9 +40,10 @@ export class OpenCodeBridge {
   private running = false
   private openCodeSessionId: string | null = null
   private lastTodos: OpenCodeTodo[] = []
+  private cleanupRegistered = false
 
   constructor(opts: OpenCodeBridgeOptions) {
-    this.port = opts.port ?? DEFAULT_PORT
+    this.port = opts.port ?? projectPort(opts.store.rootDir)
     this.store = opts.store
     this.tracker = opts.tracker
     this.contextBuilder = opts.contextBuilder
@@ -66,12 +67,20 @@ export class OpenCodeBridge {
       return false
     }
 
+    // Only essential env vars — avoid leaking API keys/tokens to child process
+    const safeEnv: Record<string, string | undefined> = {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      USERPROFILE: process.env.USERPROFILE,
+      ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot } : {}),
+    }
+
     this.serverProcess = spawn(agentExe, ['serve', '--port', String(this.port)], {
       cwd: this.store.rootDir,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: false,
-      env: { ...process.env },
-      shell: process.platform === 'win32',
+      env: safeEnv,
+      shell: false,
     })
 
     this.serverProcess.stdout?.on('data', (d: Buffer) => debug('opencode-serve:', d.toString().trim()))
@@ -81,6 +90,15 @@ export class OpenCodeBridge {
       debug('opencode serve exited with code', code)
       this.serverProcess = null
     })
+
+    // Cleanup orphaned child process if throughline exits unexpectedly
+    if (!this.cleanupRegistered) {
+      this.cleanupRegistered = true
+      const shutdown = () => this.stopServer()
+      process.on('exit', shutdown)
+      process.on('SIGINT', shutdown)
+      process.on('SIGTERM', shutdown)
+    }
 
     // Wait for server to be healthy
     const ready = await this.waitForServer()
@@ -275,7 +293,12 @@ export class OpenCodeBridge {
         if (props.part.type === 'text' && props.part.text) {
           this.maybeParseMarkers(props.part.text)
         } else if (props.part.type === 'tool' && props.part.tool) {
-          this.handleToolEvent(props.part.tool.toLowerCase(), props.part.state?.input ?? {}, props.part.state?.status)
+          const toolName = props.part.tool.toLowerCase()
+          const toolInput = props.part.state?.input ?? {}
+          if (['write', 'edit', 'file.write', 'file.edit'].includes(toolName) && Object.keys(toolInput).length === 0) {
+            console.log(`[throughline] Write tool event with empty input — full part:`, JSON.stringify(props.part))
+          }
+          this.handleToolEvent(toolName, toolInput, props.part.state?.status)
         }
         break
       }
@@ -320,9 +343,12 @@ export class OpenCodeBridge {
       let changed = false
       for (const todo of todos) {
         const task = graph.tasks.find(t => t.intent === todo.content)
-        if (task && task.status !== this.mapTodoStatus(todo.status)) {
-          task.status = this.mapTodoStatus(todo.status)
-          changed = true
+        if (task) {
+          const newStatus = this.mapTodoStatus(todo.status)
+          if (task.status !== newStatus && newStatus !== 'pending') {
+            task.status = newStatus
+            changed = true
+          }
         }
       }
       if (changed) {
@@ -523,7 +549,7 @@ export class OpenCodeBridge {
         } else {
           this.tracker.recordFileTouched(relative)
         }
-      } else if (isWriteTool) {
+      } else if (isWriteTool && status !== 'pending') {
         console.error(`[throughline] Write tool event with no filePath — input keys: ${Object.keys(input).join(', ')}`)
       }
     } else if (isBashTool) {
@@ -545,7 +571,7 @@ export class OpenCodeBridge {
     // MCP tool events — throughline_get_context and throughline_status are
     // read-only queries from the agent; skill events load skill instructions.
     // No state change needed — we just log the read for audit purposes.
-    } else if (toolName.startsWith('throughline_') || toolName === 'skill') {
+    } else if (toolName.startsWith('throughline_') || toolName === 'skill' || toolName === 'glob') {
       debug(`MCP tool: ${toolName}`)
       if (toolName === 'throughline_throughline_get_context' || toolName === 'throughline_status') {
         this.contextBuilder.logContextRead('mcp-tool')
@@ -574,6 +600,12 @@ export class OpenCodeBridge {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms))
+}
+
+// Derive a unique port per project so multiple throughline instances don't collide
+function projectPort(rootDir: string): number {
+  const hash = Math.abs(rootDir.split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0))
+  return DEFAULT_PORT + (hash % 1000)
 }
 
 function toRelative(filePath: string, rootDir: string): string {

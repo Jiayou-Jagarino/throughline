@@ -97,16 +97,28 @@ export class SessionStore {
 
   // ─── Create a new session ────────────────────────────────────────────────
   // Generates a sequential session ID (session-001, session-002, ...).
-  // For resume/repair/continue, derives ID from the parent session.
+  // For resume/repair/continue, derives ID from the ROOT session (not the
+  // parent) to avoid recursive stacking (e.g. session-010-resume-resume-2).
   createSession(goal: string, agent: Agent = 'claude-code', parent?: { id: string; relation: SessionRelation }): IntentGraph {
     let id: string
     if (parent) {
-      id = `${parent.id}-${parent.relation}`
-      // Handle multiple resumes of the same parent
+      // Walk up to root session to avoid stacking
+      let rootId = parent.id
+      const visited = new Set<string>()
+      while (!visited.has(rootId)) {
+        visited.add(rootId)
+        const graph = this.getSessionById(rootId)
+        if (graph?.session.parent_session) {
+          rootId = graph.session.parent_session
+        } else {
+          break
+        }
+      }
+      id = `${rootId}-${parent.relation}`
       if (this.getSessionById(id)) {
         let counter = 2
-        while (this.getSessionById(`${id}-${counter}`)) counter++
-        id = `${id}-${counter}`
+        while (this.getSessionById(`${rootId}-${parent.relation}-${counter}`)) counter++
+        id = `${rootId}-${parent.relation}-${counter}`
       }
     } else {
       id = this.nextSessionId()

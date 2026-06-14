@@ -984,8 +984,13 @@ export async function cmdResume(options: { agent?: string; cwd?: string; watchDe
   if (store.hasActiveSession()) {
     const graph = store.read()
     console.log(chalk.yellow(`⚠  Active session exists: "${graph.session.goal}"`))
-    console.log(chalk.dim('  Close it first with `throughline done --session`'))
-    return
+    console.log(chalk.dim('  Auto-closing as abandoned...'))
+    const ctxBuilder = new ContextBuilder(store)
+    ctxBuilder.writeContextFile('cmd-done-session')
+    ctxBuilder.stopReadWatcher()
+    store.closeSession('abandoned')
+    console.log(chalk.dim(`  ✓ Closed session ${graph.session.id}`))
+    console.log()
   }
 
   const sessions = store.listSessions()

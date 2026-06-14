@@ -1,5 +1,5 @@
 import { spawn, execSync } from 'child_process'
-import { existsSync } from 'fs'
+import { appendFileSync, existsSync } from 'fs'
 import http from 'http'
 import path from 'path'
 import type { SessionStore } from './SessionStore.js'
@@ -521,6 +521,31 @@ export class OpenCodeBridge {
   // Each tool goes through phases (pending→running→completed); we gate file
   // recording on "completed" to avoid tracking writes that later abort.
 
+  private captureFileDiff(relativePath: string): void {
+    try {
+      const diff = execSync(`git diff HEAD -- "${relativePath}"`, {
+        cwd: this.store.rootDir,
+        encoding: 'utf8',
+        stdio: 'pipe',
+        timeout: 5000,
+      })
+      if (diff.trim()) {
+        appendFileSync(
+          path.join(this.store.rootDir, '.intent', 'toollog.jsonl'),
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            type: 'file_diff',
+            file: relativePath,
+            diff: diff.trim(),
+          }) + '\n',
+          'utf8',
+        )
+      }
+    } catch {
+      // git not available, file untracked, or no diff to capture
+    }
+  }
+
   private handleToolEvent(toolName: string, input: Record<string, unknown>, status?: string): void {
     const isWriteTool = ['write', 'file.write', 'createfile', 'create_file', 'filewrite', 'edit', 'file.edit', 'editfile', 'edit_file'].includes(toolName)
     const isReadTool = ['read', 'file.read', 'readfile', 'read_file', 'fileread'].includes(toolName)
@@ -544,6 +569,7 @@ export class OpenCodeBridge {
             this.tracker.recordFileTouched(relative)
             this.contextBuilder.writeContextFile('file-touch')
             this.opts.onFileTouch?.(relative)
+            this.captureFileDiff(relative)
             console.error(`[throughline] File written: ${relative}`)
           }
         } else {

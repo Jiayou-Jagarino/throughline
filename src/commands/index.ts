@@ -263,7 +263,6 @@ export function cmdDone(options: { session?: boolean; abandon?: boolean; cwd?: s
 
   if (options.session) {
     const graph = store.read()
-    const status = options.abandon ? 'abandoned' : 'complete'
 
     const ctxB = new ContextBuilder(store)
     ctxB.writeContextFile('cmd-done-session')
@@ -274,6 +273,16 @@ export function cmdDone(options: { session?: boolean; abandon?: boolean; cwd?: s
     const completedTasks = graph.tasks.filter(t => t.status === 'complete').length
     const abandonedTasks = graph.tasks.filter(t => t.status === 'abandoned').length
     const deviatedTasks = graph.tasks.filter(t => t.status === 'deviated').length
+    const incompleteTasks = totalTasks - completedTasks - abandonedTasks - deviatedTasks
+
+    // Validate completion — force abandoned if tasks are incomplete
+    let status: 'complete' | 'abandoned' = options.abandon ? 'abandoned' : 'complete'
+    if (status === 'complete' && incompleteTasks > 0) {
+      console.log(chalk.yellow(`⚠  ${incompleteTasks} task(s) still incomplete — marking as abandoned instead of complete`))
+      console.log(chalk.dim('  Use `throughline done --session --abandon` to skip this check'))
+      console.log()
+      status = 'abandoned'
+    }
     const deviations = graph.tasks.flatMap(t => t.steps.filter(s => s.deviation))
     const allTouched = [...new Set(graph.tasks.flatMap(t => t.steps.flatMap(s => s.files.touched)))]
     const allPlanned = [...new Set(graph.tasks.flatMap(t => t.steps.flatMap(s => s.files.planned)))]

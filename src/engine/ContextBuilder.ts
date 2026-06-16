@@ -119,7 +119,7 @@ export class ContextBuilder {
     const deviations = tasks.flatMap(t => t.steps.filter(s => s.deviation)).length
     const decisionNotes = session.notes.filter(n => n.category === 'decision')
     const instructionNotes = session.notes.filter(n => n.category === 'instruction')
-    const contextNotes = session.notes.filter(n => n.category === 'context')
+    const contextNotes = session.notes.filter(n => n.category === 'context' && !n.text.startsWith('File touched (no active task)'))
     const insightNotes = session.notes.filter(n => n.category === 'insight')
 
     let block = `[THROUGHLINE CONTEXT]\n`

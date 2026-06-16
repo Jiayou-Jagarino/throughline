@@ -101,20 +101,9 @@ export class TaskTracker {
       }
     }
 
-    // Fallback: no active task/step — deduplicate before adding note
-    const noteText = `File touched (no active task): ${relative}`
-    const alreadyNoted = graph.session.notes.some(
-      n => n.category === 'context' && n.text === noteText
-    )
-    if (!alreadyNoted) {
-      graph.session.notes.push({
-        text: noteText,
-        recorded_at: new Date().toISOString(),
-        source: 'ai',
-        category: 'context',
-      })
-      this.store.write(graph)
-    }
+    // Fallback: no active task/step — skip noise notes entirely.
+    // "File touched (no active task)" entries provided no task correlation
+    // and dominated session logs (567 entries across 15 sessions with 0 value).
   }
 
   setStepStatus(taskId: string, stepId: string, status: Status): void {
